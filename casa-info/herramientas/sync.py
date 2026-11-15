@@ -1,10 +1,20 @@
-"""Tras generar la voz: saca el segundo de cada palabra (Whisper) y copia las frases a src/.
-Uso: python herramientas/sync.py public/voz.wav   (con el Python del proyecto curiosidades-animadas)"""
-import sys, json, shutil
-from faster_whisper import WhisperModel
-m = WhisperModel("small", device="cpu", compute_type="int8")
-seg, info = m.transcribe(sys.argv[1], language="es", word_timestamps=True)
-words = [{"w": w.word.strip(), "s": round(w.start, 2), "e": round(w.end, 2)} for s in seg for w in s.words]
-json.dump({"dur": round(info.duration, 2), "words": words}, open("src/palabras.json", "w"), ensure_ascii=False)
-shutil.copy(sys.argv[1].rsplit(".", 1)[0] + "-frases.json", "src/frases.json")
-print("ok", info.duration, len(words))
+"""Tras generar la voz: reparte el tiempo de cada palabra del guion dentro de su trozo (por longitud)
+y apunta cuándo empieza cada frase. Escribe src/palabras.json y src/frases.json. Uso: python herramientas/sync.py"""
+import json, re
+d = json.load(open("public/voz-trozos.json")); words = []; frases = []
+for tz in d["trozos"]:
+    toks = []
+    for fr in [p for p in re.split(r"(?<=[.!?])\s+", tz["texto"]) if p.strip()]:
+        for j, w in enumerate(fr.split()):
+            pausa = 5 if (w.endswith(".") or w.endswith("!")) else 3 if w.endswith(",") else 0
+            toks.append((w, len(re.sub(r"\W", "", w)) + 1.5 + pausa, j == 0, fr))
+    tot = sum(x[1] for x in toks); t = tz["s"]; span = tz["e"] - tz["s"]
+    for w, peso, ini, fr in toks:
+        dur = span * peso / tot; pausa = 5 if (w.endswith(".") or w.endswith("!")) else 3 if w.endswith(",") else 0
+        voz = dur * (1 - pausa / peso) if pausa else dur
+        words.append({"w": w, "s": round(t, 2), "e": round(t + voz, 2)})
+        if ini: frases.append({"texto": fr, "s": round(t, 2)})
+        t += dur
+json.dump({"dur": d["dur"], "words": words}, open("src/palabras.json", "w"), ensure_ascii=False)
+json.dump({"dur": d["dur"], "frases": frases}, open("src/frases.json", "w"), ensure_ascii=False)
+print("ok", d["dur"], len(words), "palabras,", len(frases), "frases")
